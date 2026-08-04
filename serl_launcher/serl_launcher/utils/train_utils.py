@@ -5,16 +5,32 @@ from collections import defaultdict
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 
-import imageio
 import jax
 import jax.numpy as jnp
 import numpy as np
-import tensorflow as tf
 import wandb
 from flax.core import frozen_dict
 from flax.training import checkpoints
 
-def ask_for_frame(images_dict):    
+# Compat shim for unpickling jax Arrays saved by older jax versions (e.g. the
+# rail-berkeley/serl resnet10_params.pkl release asset): their ShapedArray
+# pickled an aval_state that included `named_shape`, a field this jax's
+# ShapedArray.update() no longer accepts, so unpickling raises a TypeError.
+# Keep only the fields the current ShapedArray.update still supports.
+import jax._src.array as _jax_array
+
+_orig_reconstruct_array = _jax_array._reconstruct_array
+
+
+def _compat_reconstruct_array(fun, args, arr_state, aval_state):
+    aval_state = {k: v for k, v in aval_state.items() if k == "weak_type"}
+    return _orig_reconstruct_array(fun, args, arr_state, aval_state)
+
+
+_jax_array._reconstruct_array = _compat_reconstruct_array
+
+
+def ask_for_frame(images_dict):
     # Create a new figure
     fig, axes = plt.subplots(5, 5, figsize=(15, 20))
     
@@ -68,6 +84,9 @@ def concat_batches(offline_batch, online_batch, axis=1):
 def load_recorded_video(
     video_path: str,
 ):
+    import imageio  # heavy, optional deps -- only needed by this function
+    import tensorflow as tf
+
     with tf.io.gfile.GFile(video_path, "rb") as f:
         video = np.array(imageio.mimread(f, "MP4")).transpose((0, 3, 1, 2))
         assert video.shape[1] == 3, "Numpy array should be (T, C, H, W)"
@@ -142,7 +161,7 @@ def load_resnet10_params(agent, image_keys=("image",), public=True):
         with open(file_path, "rb") as f:
             encoder_params = pkl.load(f)
 
-    param_count = sum(x.size for x in jax.tree_leaves(encoder_params))
+    param_count = sum(x.size for x in jax.tree.leaves(encoder_params))
     print(
         f"Loaded {param_count/1e6}M parameters from ResNet-10 pretrained on ImageNet-1K"
     )

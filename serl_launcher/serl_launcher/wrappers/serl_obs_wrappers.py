@@ -18,6 +18,8 @@ class SERLObsWrapper(gym.ObservationWrapper):
             {key: self.env.observation_space["state"][key] for key in self.proprio_keys}
         )
 
+        print(self.proprio_space)
+
         self.observation_space = gym.spaces.Dict(
             {
                 "state": flatten_space(self.proprio_space),

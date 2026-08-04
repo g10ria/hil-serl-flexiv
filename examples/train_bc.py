@@ -10,7 +10,7 @@ from absl import app, flags
 from flax.training import checkpoints
 import os
 import pickle as pkl
-from gymnasium.wrappers.record_episode_statistics import RecordEpisodeStatistics
+from gymnasium.wrappers import RecordEpisodeStatistics
 
 from serl_launcher.agents.continuous.bc import BCAgent
 
@@ -31,7 +31,17 @@ flags.DEFINE_string("ip", "localhost", "IP address of the learner.")
 flags.DEFINE_string("bc_checkpoint_path", None, "Path to save checkpoints.")
 flags.DEFINE_integer("eval_n_trajs", 0, "Number of trajectories to evaluate.")
 flags.DEFINE_integer("train_steps", 20_000, "Number of pretraining steps.")
+flags.DEFINE_string(
+    "demo_path", None,
+    "Glob pattern (or single file path) for demo .pkl(s) to train on. "
+    "Defaults to demo_data/*.pkl under the current working directory."
+)
 flags.DEFINE_bool("save_video", False, "Save video of the evaluation.")
+flags.DEFINE_bool(
+    "argmax", False,
+    "Eval rollout only: use the policy's deterministic mode instead of stochastically "
+    "sampling from its action distribution. Off by default (matches prior behavior)."
+)
 
 
 flags.DEFINE_boolean(
@@ -41,7 +51,12 @@ flags.DEFINE_boolean(
 
 devices = jax.local_devices()
 num_devices = len(devices)
-sharding = jax.sharding.PositionalSharding(devices)
+# PositionalSharding was removed in newer jax; a NamedSharding over a trivial
+# mesh with an empty PartitionSpec is the modern equivalent of "replicated
+# across all devices" -- every call site below used PositionalSharding only
+# via .replicate(), so `sharding` itself now stands in for that directly.
+mesh = jax.sharding.Mesh(devices, axis_names=("x",))
+sharding = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec())
 
 
 def print_green(x):
@@ -64,14 +79,31 @@ def eval(
     """
     success_counter = 0
     time_list = []
+    zero_action = np.zeros(env.action_space.sample().shape)
     for episode in range(FLAGS.eval_n_trajs):
         obs, _ = env.reset()
+
+        # Wait for a SHIFT press before letting the policy act -- gives a
+        # moment to get near the SpaceMouse (still live as an override) or
+        # just confirm the reset pose looks right before real motion starts.
+        # Mirrors record_demos.py's free-movement-then-clutch pattern; since
+        # zero_action still passes through FlexivSpacemouseIntervention,
+        # touching the SpaceMouse during this wait repositions the arm same
+        # as during collection.
+        print(f"[eval {episode}/{FLAGS.eval_n_trajs}] Hold SHIFT to let the policy start.")
+        while True:
+            obs, _, wait_done, _, info = env.step(zero_action)
+            if info.get("start_recording"):
+                break
+            if wait_done:
+                obs, _ = env.reset()
+
         done = False
         start_time = time.time()
         while not done:
             rng, key = jax.random.split(sampling_rng)
 
-            actions = bc_agent.sample_actions(observations=obs, seed=key)
+            actions = bc_agent.sample_actions(observations=obs, seed=key, argmax=FLAGS.argmax)
             actions = np.asarray(jax.device_get(actions))
             next_obs, reward, done, truncated, info = env.step(actions)
             obs = next_obs
@@ -103,7 +135,7 @@ def train(
             "batch_size": config.batch_size,
             "pack_obs_and_next_obs": False,
         },
-        device=sharding.replicate(),
+        device=sharding,
     )
     
     # Pretrain BC policy to get started
@@ -150,7 +182,7 @@ def main(_):
     # replicate agent across devices
     # need the jnp.array to avoid a bug where device_put doesn't recognize primitives
     bc_agent: BCAgent = jax.device_put(
-        jax.tree_map(jnp.array, bc_agent), sharding.replicate()
+        jax.tree.map(jnp.array, bc_agent), sharding
     )
 
     if not eval_mode:
@@ -172,9 +204,9 @@ def main(_):
             debug=FLAGS.debug,
         )
 
-        demo_path = glob.glob(os.path.join(os.getcwd(), "demo_data", "*.pkl"))
-        
-        assert demo_path is not []
+        demo_path = glob.glob(FLAGS.demo_path) if FLAGS.demo_path else glob.glob(os.path.join(os.getcwd(), "demo_data", "*.pkl"))
+
+        assert demo_path, f"No demo .pkl files found (demo_path flag: {FLAGS.demo_path!r})"
 
         for path in demo_path:
             with open(path, "rb") as f:
@@ -195,12 +227,15 @@ def main(_):
 
     else:
         rng = jax.random.PRNGKey(FLAGS.seed)
-        sampling_rng = jax.device_put(rng, sharding.replicate())
+        sampling_rng = jax.device_put(rng, sharding)
 
-        bc_ckpt = checkpoints.restore_checkpoint(
-            FLAGS.bc_checkpoint_path,
-            bc_agent.state,
-        )
+        ckpt_dir = os.path.abspath(FLAGS.bc_checkpoint_path)
+        # restore_checkpoint silently no-ops (returns the untouched target) if
+        # nothing's found at this path -- that would mean rolling out a
+        # randomly initialized head on real hardware with no error at all.
+        if checkpoints.latest_checkpoint(ckpt_dir) is None:
+            raise FileNotFoundError(f"No checkpoint found at {ckpt_dir}")
+        bc_ckpt = checkpoints.restore_checkpoint(ckpt_dir, bc_agent.state)
         bc_agent = bc_agent.replace(state=bc_ckpt)
 
         print_green("starting actor loop")
