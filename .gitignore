@@ -3,3 +3,4 @@ examples/act_checkpoints/
 examples/bc_checkpoints/
 demo_data/
 *.cpython-312.pyc
+examples/wandb/

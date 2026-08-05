@@ -1,2 +1,0 @@
-[92m starting learner loop[00m
-act_pretraining:  10%|█████████▊                                                                                      | 10276/100000 [21:34<1:20:13, 18.64it/s, l1_loss=0.337, kld_loss=0.00454]
