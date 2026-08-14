@@ -30,7 +30,12 @@ def main(_):
     env = config.get_environment(fake_env=True, save_video=False, classifier=False)
 
     devices = jax.local_devices()
-    sharding = jax.sharding.PositionalSharding(devices)
+    # PositionalSharding was removed in newer jax; a NamedSharding over a trivial
+    # mesh with an empty PartitionSpec is the modern equivalent of "replicated
+    # across all devices" -- every call site below used PositionalSharding only
+    # via .replicate(), so `sharding` itself now stands in for that directly.
+    mesh = jax.sharding.Mesh(devices, axis_names=("x",))
+    sharding = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec())
     
     # Create buffer for positive transitions
     pos_buffer = ReplayBuffer(
@@ -54,9 +59,9 @@ def main(_):
         sample_args={
             "batch_size": FLAGS.batch_size // 2,
         },
-        device=sharding.replicate(),
+        device=sharding,
     )
-    
+
     # Create buffer for negative transitions
     neg_buffer = ReplayBuffer(
         env.observation_space,
@@ -80,7 +85,7 @@ def main(_):
         sample_args={
             "batch_size": FLAGS.batch_size // 2,
         },
-        device=sharding.replicate(),
+        device=sharding,
     )
 
     print(f"failed buffer size: {len(neg_buffer)}")

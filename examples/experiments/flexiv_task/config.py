@@ -42,6 +42,7 @@ class EnvConfig():
 
 class TrainConfig(DefaultTrainingConfig):
     image_keys: List[str] = list(EnvConfig.REALSENSE_SERIALS.keys())
+    classifier_keys: List[str] = list(EnvConfig.REALSENSE_SERIALS.keys())
     proprio_keys: List[str] = ["tcp_pose", "tcp_vel", "tcp_force", "tcp_torque"] # no gripper for now
     encoder_type: str = "resnet-pretrained"
     setup_mode: str = "single-arm-fixed-gripper"

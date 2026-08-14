@@ -122,18 +122,22 @@ class FlexivEnv(gym.Env):
 
     def _get_obs(self):
         '''
-        Returns obs_dict, q
+        Returns obs_dict, q, tau_ext
         obs_dict is a dict of the observation representation at this step
         (as specified in the config)
         q is the current joint positions - used for visualizing this demo in sim,
         not for training, so it's not included in obs_dict and instead set via
         the 'info' dict
+        tau_ext is the estimated external joint torque (Nm) - same reasoning as
+        q, kept out of obs_dict since it's only used for the joint-torque safety
+        check in step(), not something the policy should be trained on
         '''
         states = self.robot.get_states()
         tcp_pose_in_world_frame = states.tcp_pose
         tcp_vel_in_world_frame = states.tcp_vel
         tcp_wrench_in_tcp_frame = states.ext_wrench_in_tcp
         q = states.q # joint positions in rad
+        tau_ext = states.tau_ext # estimated external joint torque, Nm
 
         # print(tcp_wrench_in_tcp_frame)
 
@@ -163,7 +167,7 @@ class FlexivEnv(gym.Env):
             },
             "images": images,
         }
-        return obs, np.asarray(q, dtype=np.float32)
+        return obs, np.asarray(q, dtype=np.float32), np.asarray(tau_ext, dtype=np.float32)
 
     def _send_gripper_command(self, pos: float, mode="binary"):
         """Internal function to send gripper command to the robot."""
@@ -197,7 +201,7 @@ class FlexivEnv(gym.Env):
         gripper_action = action[6] * self.config.ACTION_SCALE[2]
         self._send_gripper_command(gripper_action)
 
-        obs, q = self._get_obs()
+        obs, q, tau_ext = self._get_obs()
 
         start_recording = self._start_recording
         self._start_recording = False # one-shot: consume it so it doesn't re-fire next step
@@ -216,6 +220,12 @@ class FlexivEnv(gym.Env):
                 f"MIN_TCP_Z={self.config.MIN_TCP_Z} -- terminating episode (table safety)."
             )
             self._terminate = True
+        if tau_ext[3] <= -50.0:
+            print(
+                f"[FlexivEnv] a4 joint torque={tau_ext[3]:.4f} <= -50.0 -- terminating episode (table safety)."
+            )
+            self._terminate = True
+            # [2026-08-06 12:46:31.787] [error] [Event Log] [311009] Axis A4 joint torque -64.03[Nm] exceeds the limit 64.00[Nm].
 
         # also terminate if we hit the step count (and we were recording)
         if self._recording and self._step_count >= self.config.MAX_EPISODE_LENGTH:
@@ -251,7 +261,7 @@ class FlexivEnv(gym.Env):
         self._step_count = 0
         self._terminate = False
         self._recording = False
-        obs, q = self._get_obs()
+        obs, q, tau_ext = self._get_obs()
         return obs, {"q": q}
 
     def _move_to_reset_pose(self):

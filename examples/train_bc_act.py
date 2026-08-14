@@ -73,6 +73,16 @@ flags.DEFINE_integer(
     "a crash/interrupt earlier in training lost all progress."
 )
 flags.DEFINE_integer(
+    "resume_step", 0,
+    "Resume training from checkpoint_<resume_step> under --checkpoint_path -- loads "
+    "policy weights, the preprocessor/postprocessor's normalization stats (from that "
+    "checkpoint, NOT recomputed from --demo_path -- keeping the model's normalization "
+    "fixed across a DAgger-style continuation onto new/aggregated data is what actually "
+    "matters, not matching whatever's in this run's demo file), and the optimizer's "
+    "AdamW state (if saved), then continues stepping up to --train_steps total. "
+    "0 = train from scratch (default)."
+)
+flags.DEFINE_integer(
     "keep_checkpoints", 5,
     "Keep only the N most recent checkpoint_* dirs under --checkpoint_path, deleting "
     "older ones after each save -- each one holds a full ACT policy (incl. ResNet18 "
@@ -350,9 +360,11 @@ def train(policy, preprocessor, postprocessor, dataloader, config, optimizer, de
     data_iter = _cycle(dataloader)
 
     pbar = tqdm.tqdm(
-        range(FLAGS.train_steps),
+        range(FLAGS.resume_step, FLAGS.train_steps),
         dynamic_ncols=True,
         desc="act_pretraining",
+        initial=FLAGS.resume_step,
+        total=FLAGS.train_steps,
     )
     for step in pbar:
         batch = next(data_iter)
@@ -383,6 +395,7 @@ def train(policy, preprocessor, postprocessor, dataloader, config, optimizer, de
             policy.save_pretrained(ckpt_dir)
             preprocessor.save_pretrained(ckpt_dir)
             postprocessor.save_pretrained(ckpt_dir)
+            torch.save(optimizer.state_dict(), os.path.join(ckpt_dir, "optimizer.pt"))
             _prune_old_checkpoints(ckpt_root, FLAGS.keep_checkpoints)
     print_green("act pretraining done and saved checkpoint")
 
@@ -444,13 +457,37 @@ def main(_):
             dataset, batch_size=FLAGS.batch_size, shuffle=True, num_workers=0, drop_last=True
         )
 
-        dataset_stats = compute_dataset_stats(episodes, image_keys, act_image_keys)
-
-        policy = ACTPolicy(config=act_cfg).to(device)
-        preprocessor, postprocessor = make_pre_post_processors(policy_cfg=act_cfg, dataset_stats=dataset_stats)
-        optimizer = torch.optim.AdamW(
-            policy.get_optim_params(), lr=act_cfg.optimizer_lr, weight_decay=act_cfg.optimizer_weight_decay
-        )
+        if FLAGS.resume_step > 0:
+            resume_dir = os.path.join(os.path.abspath(FLAGS.checkpoint_path), f"checkpoint_{FLAGS.resume_step}")
+            assert os.path.isdir(resume_dir), f"--resume_step={FLAGS.resume_step} but {resume_dir} doesn't exist"
+            print_green(f"Resuming from {resume_dir}")
+            policy = ACTPolicy.from_pretrained(resume_dir).to(device)
+            # Reuse the ORIGINAL normalization stats from the checkpoint, not
+            # ones recomputed from this run's --demo_path -- the model's inputs
+            # need a fixed normalization across its whole training lifetime;
+            # recomputing from a different/aggregated dataset here would shift
+            # normalization out from under everything it already learned.
+            preprocessor, postprocessor = make_pre_post_processors(policy_cfg=policy.config, pretrained_path=resume_dir)
+            optimizer = torch.optim.AdamW(
+                policy.get_optim_params(), lr=act_cfg.optimizer_lr, weight_decay=act_cfg.optimizer_weight_decay
+            )
+            optimizer_ckpt = os.path.join(resume_dir, "optimizer.pt")
+            if os.path.isfile(optimizer_ckpt):
+                optimizer.load_state_dict(torch.load(optimizer_ckpt, map_location=device))
+                print_green("Restored optimizer (AdamW) state.")
+            else:
+                print_yellow(
+                    f"No optimizer.pt found at {resume_dir} (checkpoint predates optimizer-state "
+                    "saving) -- continuing with a freshly-initialized optimizer. Policy weights "
+                    "still resume correctly; only Adam's running gradient-moment estimates restart."
+                )
+        else:
+            dataset_stats = compute_dataset_stats(episodes, image_keys, act_image_keys)
+            policy = ACTPolicy(config=act_cfg).to(device)
+            preprocessor, postprocessor = make_pre_post_processors(policy_cfg=act_cfg, dataset_stats=dataset_stats)
+            optimizer = torch.optim.AdamW(
+                policy.get_optim_params(), lr=act_cfg.optimizer_lr, weight_decay=act_cfg.optimizer_weight_decay
+            )
 
         wandb_logger = make_wandb_logger(project="hil-serl", description=FLAGS.exp_name, debug=FLAGS.debug)
 
