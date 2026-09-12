@@ -35,7 +35,6 @@ if _SERL_ROBOT_INFRA_FLEXIV not in sys.path:
 from spacemouse_expert import SpaceMouseExpert
 from flexiv_api import FlexivRobot
 from utils.realsense_d405 import ThreadedRealsenseImageGenerator
-from utils.robotiq_gripper import RobotiqGripper
 
 IMAGE_SIZE = 128
 
@@ -90,11 +89,8 @@ class FlexivEnv(gym.Env):
         if fake_env:
             return
 
-        gripper = RobotiqGripper()
-        gripper.activate()
-        self.gripper = gripper
-
-        self.robot = FlexivRobot(config.ROBOT_SERIAL, gripper_com_port=None, compliant_z=True)
+        self.robot = FlexivRobot(config.ROBOT_SERIAL, gripper_name="Robotiq-2F-85", compliant_z=True)
+        self.gripper = self.robot.gripper
         self.cameras = ThreadedRealsenseImageGenerator(
             [config.REALSENSE_SERIALS[name] for name in self._camera_names]
         )

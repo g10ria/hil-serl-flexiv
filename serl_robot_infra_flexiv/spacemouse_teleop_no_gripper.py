@@ -1,11 +1,10 @@
 #!/usr/bin/env python
 
 import sys
-import threading
 import time
 from pathlib import Path
 
-# spacemouse_teleop.py -> serl_robot_infra_flexiv -> hil-serl -> robotscripts
+# spacemouse_teleop_no_gripper.py -> serl_robot_infra_flexiv -> hil-serl -> robotscripts
 _ROBOTSCRIPTS_ROOT = str(Path(__file__).resolve().parents[2])
 if _ROBOTSCRIPTS_ROOT not in sys.path:
     sys.path.insert(0, _ROBOTSCRIPTS_ROOT)
@@ -17,9 +16,12 @@ _THIS_DIR = str(Path(__file__).resolve().parent)
 if _THIS_DIR not in sys.path:
     sys.path.insert(0, _THIS_DIR)
 
+
 '''
 this script allows for teleop of the robot arm(s) using a spacemouse
 it directly passes the velocity of the spacemouse through to the arm
+
+same as spacemouse_teleop.py, but does not connect to the gripper
 '''
 
 from spacemouse_expert import SpaceMouseExpert
@@ -30,8 +32,6 @@ ENABLED_ARMS = [consts.LEFT_ARM_SERIAL]  # put the serial numbers of arms to ena
 DT = 1.0 / 30.0  # put hz of the controls here
 
 ACTION_TAKEN_EPS = 1e-3  # treat smaller-than-this raw deflection as "not moved"
-
-GRIPPER_SLEEP = 0.6  # cooldown between gripper actuations, matches FlexivEnv._send_gripper_command's gripper_sleep
 
 # SpaceMouseExpert starts a multiprocessing.Process internally -- on Windows,
 # multiprocessing uses "spawn" (not "fork"), which re-imports this whole
@@ -44,36 +44,20 @@ if __name__ == "__main__":
     if len(ENABLED_ARMS) == 0:
         raise ValueError("no arms are specified to be on")
 
-    arms = [FlexivRobot(serial, compliant_z=True, gripper_name="Robotiq-2F-85") for serial in ENABLED_ARMS]
+    arms = [FlexivRobot(serial, compliant_z=True) for serial in ENABLED_ARMS]
     current_poses = [arm.get_current_pose() for arm in arms]
     mouse = SpaceMouseExpert()  # defaults to pyspacemouse_windows; kicks off a background process that samples the spacemouse
-    gripper = arms[0].gripper
-
-    gripper_open = True
-    last_gripper_act = time.time()
 
     prev_time = time.time()
 
     try:
         while True:
             raw_action, buttons = mouse.get_action()  # raw ~[-1,1] deflection + button list
-            left, right = buttons[0], buttons[1]  # same left=close/right=open mapping as SpacemouseIntervention
 
             now = time.time()
             for i in range(len(arms)):
                 arms[i].action(raw_action[:6], now-prev_time)
             prev_time = now
-
-            if left and gripper_open and (now - last_gripper_act > GRIPPER_SLEEP):
-                print("closing gripper")
-                threading.Thread(target=gripper.grasp, daemon=True).start()
-                gripper_open = False
-                last_gripper_act = now
-            elif right and not gripper_open and (now - last_gripper_act > GRIPPER_SLEEP):
-                print("opening gripper")
-                threading.Thread(target=gripper.open, daemon=True).start()
-                gripper_open = True
-                last_gripper_act = now
 
             time.sleep(DT)
     finally:
