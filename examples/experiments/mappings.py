@@ -3,6 +3,7 @@ from experiments.usb_pickup_insertion.config import TrainConfig as USBPickupInse
 from experiments.object_handover.config import TrainConfig as ObjectHandoverTrainConfig
 from experiments.egg_flip.config import TrainConfig as EggFlipTrainConfig
 from experiments.flexiv_task.config import TrainConfig as FlexivTaskTrainConfig
+from experiments.block_stacking.config import TrainConfig as BlockStackingTrainConfig
 
 CONFIG_MAPPING = {
                 "ram_insertion": RAMInsertionTrainConfig,
@@ -10,4 +11,5 @@ CONFIG_MAPPING = {
                 "object_handover": ObjectHandoverTrainConfig,
                 "egg_flip": EggFlipTrainConfig,
                 "flexiv_task": FlexivTaskTrainConfig,
+                "block_stacking": BlockStackingTrainConfig,
                }

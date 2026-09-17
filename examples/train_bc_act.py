@@ -121,6 +121,11 @@ flags.DEFINE_string(
     "Glob pattern (or single file path) for demo .pkl(s) to train on. "
     "Defaults to demo_data/*.pkl under the current working directory."
 )
+flags.DEFINE_boolean(
+    "human_classifier", False,
+    "Use a live human-typed 'Success? (1/0)' prompt (HumanClassifierWrapper) for reward "
+    "instead of the trained classifier checkpoint. Only affects --eval_n_trajs>0 rollouts."
+)
 
 IMAGE_KEY_PREFIX = "observation.image."
 
@@ -407,7 +412,7 @@ def main(_):
     config: DefaultTrainingConfig = CONFIG_MAPPING[FLAGS.exp_name]()
     assert FLAGS.exp_name in CONFIG_MAPPING, "Experiment folder not found."
     eval_mode = FLAGS.eval_n_trajs > 0
-    env = config.get_environment(fake_env=not eval_mode, save_video=FLAGS.save_video, classifier=True)
+    env = config.get_environment(fake_env=not eval_mode, save_video=FLAGS.save_video, classifier=True, human_classifier=FLAGS.human_classifier)
     env = RecordEpisodeStatistics(env)
 
     torch.manual_seed(FLAGS.seed)

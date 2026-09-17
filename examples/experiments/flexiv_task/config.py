@@ -5,9 +5,13 @@ Fill in EnvConfig.REALSENSE_SERIALS (and tune ACTION_SCALE) before use.
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 from typing import Dict, List, Tuple
+
+import jax
+import jax.numpy as jnp
 
 _ROBOTSCRIPTS_ROOT = str(Path(__file__).resolve().parents[4])
 if _ROBOTSCRIPTS_ROOT not in sys.path:
@@ -16,9 +20,10 @@ if _ROBOTSCRIPTS_ROOT not in sys.path:
 from utils.consts import LEFT_ARM_SERIAL
 
 from franka_env.envs.relative_env import RelativeFrame
-from franka_env.envs.wrappers import HumanClassifierWrapper, Quat2EulerWrapper
+from franka_env.envs.wrappers import HumanClassifierWrapper, MultiCameraBinaryRewardClassifierWrapper, Quat2EulerWrapper
 from serl_launcher.wrappers.chunking import ChunkingWrapper
 from serl_launcher.wrappers.serl_obs_wrappers import SERLObsWrapper
+from serl_launcher.networks.reward_classifier import load_classifier_func
 
 from experiments.config import DefaultTrainingConfig
 from experiments.flexiv_task.wrapper import FlexivEnv, SpacemouseIntervention
@@ -46,8 +51,10 @@ class TrainConfig(DefaultTrainingConfig):
     proprio_keys: List[str] = ["tcp_pose", "tcp_vel", "tcp_force", "tcp_torque"] # no gripper for now
     encoder_type: str = "resnet-pretrained"
     setup_mode: str = "single-arm-fixed-gripper"
+    buffer_period = 1000
+    checkpoint_period = 5000
 
-    def get_environment(self, fake_env=False, save_video=False, classifier=False):
+    def get_environment(self, fake_env=False, save_video=False, classifier=False, human_classifier=False):
         env = FlexivEnv(hz=EnvConfig.HZ, fake_env=fake_env, config=EnvConfig())
         if not fake_env:
             env = SpacemouseIntervention(env)
@@ -56,5 +63,29 @@ class TrainConfig(DefaultTrainingConfig):
         env = SERLObsWrapper(env, proprio_keys=self.proprio_keys)
         env = ChunkingWrapper(env, obs_horizon=1, act_exec_horizon=None)
         if classifier:
-            env = HumanClassifierWrapper(env)
+            if human_classifier:
+                env = HumanClassifierWrapper(env)
+            else:
+                classifier_fn = load_classifier_func(
+                    key=jax.random.PRNGKey(0),
+                    sample=env.observation_space.sample(),
+                    image_keys=self.classifier_keys,
+                    checkpoint_path=os.path.abspath("classifier_ckpt/"),
+                )
+
+                def reward_func(obs):
+                    sigmoid = lambda x: 1 / (1 + jnp.exp(-x))
+                    prob = float(sigmoid(classifier_fn(obs)).squeeze())
+                    success = prob > 0.85
+                    # Overwrite-in-place live gauge (same style as run_reward_classifier.py) --
+                    # this runs every env.step(), i.e. up to HZ=30/sec, so a plain print()
+                    # here would flood the terminal. Success moments get their own line so
+                    # they're not lost when overwritten by the next step's readout.
+                    sys.stdout.write(f"\rP(success) = {prob:.3f} {'<-- SUCCESS' if success else '           '}")
+                    sys.stdout.flush()
+                    if success:
+                        print()
+                    return int(success)
+
+                env = MultiCameraBinaryRewardClassifierWrapper(env, reward_func)
         return env

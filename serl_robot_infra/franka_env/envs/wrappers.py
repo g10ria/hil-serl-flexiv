@@ -13,19 +13,26 @@ from typing import List
 sigmoid = lambda x: 1 / (1 + np.exp(-x))
 
 class HumanClassifierWrapper(gym.Wrapper):
+    # Raw human input -> (reward, outcome label). Reward is what the agent
+    # trains on (1 for success, 0 otherwise); outcome is purely informational,
+    # distinguishing *why* a non-success episode ended (ran out of time vs.
+    # actively went wrong) without changing what the agent sees as reward.
+    _OUTCOMES = {1: (1, "success"), 0: (0, "timeout"), -1: (0, "failure")}
+
     def __init__(self, env):
         super().__init__(env)
-    
+
     def step(self, action):
         obs, rew, done, truncated, info = self.env.step(action)
         if done:
             while True:
                 try:
-                    rew = int(input("Success? (1/0)"))
-                    assert rew == 0 or rew == 1
+                    label = int(input("Outcome? (1=success/0=timeout/-1=failure) "))
+                    rew, outcome = self._OUTCOMES[label]
                     break
-                except:
+                except (ValueError, KeyError):
                     continue
+            info['human-labeled-outcome'] = outcome
         info['succeed'] = rew
         return obs, rew, done, truncated, info
     

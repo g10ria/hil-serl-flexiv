@@ -65,6 +65,11 @@ flags.DEFINE_string(
     "appended automatically). Defaults to '<exp_name>_interventions_<timestamp>.pkl' "
     "if unset. Ignored unless --save_interventions is set."
 )
+flags.DEFINE_boolean(
+    "human_classifier", True,
+    "Use a live human-typed 'Success? (1/0)' prompt (HumanClassifierWrapper) for reward "
+    "instead of the trained classifier checkpoint."
+)
 
 
 def load_act_policy(checkpoint_path: str):
@@ -244,7 +249,7 @@ def main(_):
     assert FLAGS.exp_name in CONFIG_MAPPING, "Experiment folder not found."
     assert FLAGS.act_checkpoint, "--act_checkpoint is required."
     config = CONFIG_MAPPING[FLAGS.exp_name]()
-    env = config.get_environment(fake_env=False, save_video=False, classifier=True)
+    env = config.get_environment(fake_env=False, save_video=False, classifier=True, human_classifier=FLAGS.human_classifier)
     env = RecordEpisodeStatistics(env)
 
     if FLAGS.act_checkpoint_2:

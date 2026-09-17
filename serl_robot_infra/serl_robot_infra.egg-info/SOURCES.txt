@@ -13,6 +13,7 @@ franka_env/envs/relative_env.py
 franka_env/envs/wrappers.py
 franka_env/spacemouse/__init__.py
 franka_env/spacemouse/pyspacemouse.py
+franka_env/spacemouse/pyspacemouse_windows.py
 franka_env/spacemouse/spacemouse_expert.py
 franka_env/spacemouse/spacemouse_test.py
 franka_env/utils/__init__.py

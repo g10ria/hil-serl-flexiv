@@ -1,0 +1,3 @@
+{"step": 5000, "n_trajs": 20, "successes": 0, "success_rate": 0.0, "avg_success_time": null, "deterministic": true, "timestamp": 1787881653.478908}
+{"step": 105000, "n_trajs": 20, "successes": 18, "success_rate": 0.9, "avg_success_time": 4.747283799307687, "deterministic": true, "timestamp": 1787882096.5359654}
+{"step": 50000, "n_trajs": 20, "successes": 0, "success_rate": 0.0, "avg_success_time": null, "deterministic": true, "timestamp": 1787882844.8192828}

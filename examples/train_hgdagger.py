@@ -47,6 +47,11 @@ flags.DEFINE_integer("pretrain_steps", 20_000, "Number of pretraining steps.")
 flags.DEFINE_boolean(
     "debug", False, "Debug mode."
 )  # debug mode will disable wandb logging
+flags.DEFINE_boolean(
+    "human_classifier", False,
+    "Use a live human-typed 'Success? (1/0)' prompt (HumanClassifierWrapper) for reward "
+    "instead of the trained classifier checkpoint."
+)
 
 
 devices = jax.local_devices()
@@ -345,9 +350,10 @@ def main(_):
     rng, sampling_rng = jax.random.split(rng)
 
     assert FLAGS.exp_name in CONFIG_MAPPING, 'Experiment folder not found.'
-    env = config.get_environment(fake_env=FLAGS.learner, 
-                                 save_video=False, 
-                                 classifier=FLAGS.actor)
+    env = config.get_environment(fake_env=FLAGS.learner,
+                                 save_video=False,
+                                 classifier=FLAGS.actor,
+                                 human_classifier=FLAGS.human_classifier)
     env = RecordEpisodeStatistics(env)
 
     rng, sampling_rng = jax.random.split(rng)

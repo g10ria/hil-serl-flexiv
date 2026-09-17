@@ -18,6 +18,12 @@ flags.DEFINE_string(
     "appended automatically if you don't include it). Defaults to "
     "'<exp_name>_<timestamp>.pkl' if unset."
 )
+flags.DEFINE_boolean(
+    "human_classifier", True,
+    "Use a live human-typed 'Success? (1/0)' prompt (HumanClassifierWrapper) for reward "
+    "instead of the trained classifier checkpoint. Defaults on for demo collection -- see "
+    "the comment below on HumanClassifierWrapper prompting on every `done`."
+)
 
 def save_transitions(transitions, file_name):
     with open(file_name, "wb") as f:
@@ -27,7 +33,7 @@ def save_transitions(transitions, file_name):
 def main(_):
     assert FLAGS.exp_name in CONFIG_MAPPING, 'Experiment folder not found.'
     config = CONFIG_MAPPING[FLAGS.exp_name]()
-    env = config.get_environment(fake_env=False, save_video=False, classifier=True)
+    env = config.get_environment(fake_env=False, save_video=True, classifier=True, human_classifier=FLAGS.human_classifier)
 
     obs, info = env.reset()
     print("Reset done")
