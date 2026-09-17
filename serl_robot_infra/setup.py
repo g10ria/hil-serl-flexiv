@@ -7,7 +7,6 @@ setup(
     install_requires=[
         "gymnasium",
         "pyrealsense2",
-        "pymodbus==2.5.3",
         "opencv-python",
         "pyquaternion",
         "pyspacemouse",

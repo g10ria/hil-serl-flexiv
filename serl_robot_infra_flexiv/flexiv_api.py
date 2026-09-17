@@ -35,11 +35,80 @@ def initialize_flexiv_robots(serialNumbers = [LEFT_ARM_SERIAL],
         robots.append(FlexivRobot(serialNumbers[i], defaultModes[i]))
     return robots
 
+
+class FlexivGripper:
+    """Robotiq gripper control via Flexiv RDK's native Gripper interface.
+
+    The gripper is wired through the arm into the control box, which talks
+    to it internally over its own serial port -- so from the PC side it's
+    controlled over the same RDK Ethernet connection as the arm itself, via
+    flexivrdk.Gripper.
+    """
+
+    def __init__(self, robot: rdk.Robot, name: str = "Robotiq-2F-85"):
+        # The device being enabled robot-side (Device.enabled(name)) is a
+        # separate, persistent thing from the Gripper interface being bound
+        # to it for *this* RDK connection -- that binding always needs an
+        # explicit Enable() call on the Gripper object itself, every session,
+        # regardless of the device's own enabled state.
+        self.gripper = rdk.Gripper(robot)
+        self.gripper.Enable(name)
+        self.name = name
+        self.params = self.gripper.params()
+
+    def activate(self):
+        # Robotiq 2F-85 auto-initializes on power-on, so there's nothing to
+        # do here. Kept as a no-op so this is a drop-in replacement for
+        # RobotiqGripper's activate().
+        pass
+
+    def move(self, width, velocity=None, force=None):
+        """
+        width: target opening width, in meters (0 = fully closed, params.max_width = fully open)
+        velocity: closing/opening velocity in m/s, defaults to params.max_vel
+        force: max contact force in N during the move, defaults to params.max_force
+        """
+        velocity = velocity if velocity is not None else self.params.max_vel
+        force = force if force is not None else self.params.max_force
+        self.gripper.Move(width, velocity, force)
+
+    def open(self):
+        self.move(self.params.max_width)
+
+    def grasp(self, force=None):
+        """Close the gripper to grasp whatever's between the jaws.
+
+        Uses position control toward fully closed with a force limit, not
+        Gripper.Grasp() -- confirmed on hardware that Grasp() (direct force
+        control) has no effect on this gripper, since Robotiq's 2F-85 has no
+        true force-only control mode at the protocol level: it only supports
+        position commands with a force limit that lets it stop early on
+        contact instead of crushing the object. Same approach
+        utils/robotiq_gripper.py's grasp() used (move(position=255, force=...)).
+        """
+        self.move(self.params.min_width, force=force)
+
+    def stop(self):
+        self.gripper.Stop()
+
+    def states(self):
+        return self.gripper.states()
+
+    def get_position(self) -> float:
+        """Continuous jaw position in [0, 1]: 1.0 = fully open, 0.0 = fully
+        closed -- same convention as utils/robotiq_gripper.py's
+        RobotiqGripper.get_position(), so FlexivEnv._get_obs() can use either
+        gripper backend interchangeably."""
+        width = self.gripper.states().width
+        return (width - self.params.min_width) / (self.params.max_width - self.params.min_width)
+
+
 class FlexivRobot:
     def __init__(self,
                  serialNumber,
                  defaultMode = rdk.Mode.NRT_CARTESIAN_MOTION_FORCE,
                  gripper_com_port = None,
+                 gripper_name = None,
                  should_enable = True,
                  home_robot = False,
                  compliant_z = False):
@@ -60,9 +129,19 @@ class FlexivRobot:
                     return 1
                 logger.info("Fault on the connected robot is cleared")
 
-            # Plug in the gripper if there is one
+            # Plug in the gripper if there is one -- gripper_com_port wires up
+            # the standalone Modbus RobotiqGripper (a separate serial/USB
+            # connection to the gripper), gripper_name goes through Flexiv
+            # RDK's own Gripper interface instead (same Ethernet connection
+            # as the arm). Mutually exclusive: pick whichever matches how
+            # this robot's gripper is actually wired.
             if gripper_com_port is not None:
                 gripper = RobotiqGripper(serial_port=gripper_com_port)
+                gripper.activate()
+                self.gripper = gripper
+                logger.info(f"Robot now has gripper")
+            elif gripper_name is not None:
+                gripper = FlexivGripper(robot, name=gripper_name)
                 gripper.activate()
                 self.gripper = gripper
                 logger.info(f"Robot now has gripper")

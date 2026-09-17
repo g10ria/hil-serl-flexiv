@@ -37,7 +37,6 @@ if _SERL_ROBOT_INFRA_FLEXIV not in sys.path:
 from spacemouse_expert import SpaceMouseExpert
 from flexiv_api import FlexivRobot
 from utils.realsense_d405 import ThreadedRealsenseImageGenerator
-from utils.robotiq_gripper import RobotiqGripper, GripperFault
 
 IMAGE_SIZE = 128
 
@@ -83,7 +82,7 @@ class FlexivEnv(gym.Env):
                         "tcp_vel": gym.spaces.Box(-np.inf, np.inf, shape=(6,), dtype=np.float32),
                         "tcp_force": gym.spaces.Box(-np.inf, np.inf, shape=(3,), dtype=np.float32),
                         "tcp_torque": gym.spaces.Box(-np.inf, np.inf, shape=(3,), dtype=np.float32),
-                        # continuous jaw position, 1=open/0=closed (see RobotiqGripper.get_position) --
+                        # continuous jaw position, 1=open/0=closed (see FlexivGripper.get_position) --
                         # not binary, since grasp() stops early on contact and the partial-close
                         # amount is itself informative (grasp detection / object width)
                         "gripper_pose": gym.spaces.Box(0, 1, shape=(1,), dtype=np.float32),
@@ -107,11 +106,8 @@ class FlexivEnv(gym.Env):
         if fake_env:
             return
 
-        gripper = RobotiqGripper()
-        gripper.activate()
-        self.gripper = gripper
-
-        self.robot = FlexivRobot(config.ROBOT_SERIAL, gripper_com_port=None, compliant_z=True)
+        self.robot = FlexivRobot(config.ROBOT_SERIAL, gripper_name="Robotiq-2F-85", compliant_z=True)
+        self.gripper = self.robot.gripper
         self.cameras = ThreadedRealsenseImageGenerator(
             [config.REALSENSE_SERIALS[name] for name in self._camera_names]
         )
@@ -194,47 +190,17 @@ class FlexivEnv(gym.Env):
         }
         return obs, np.asarray(q, dtype=np.float32), np.asarray(tau_ext, dtype=np.float32)
 
-    def _run_gripper_call(self, fn, label: str) -> None:
-        """Runs a RobotiqGripper call (grasp/open) on a background thread and
-        actually surfaces failures. Without this, an exception raised inside
-        the thread (a GripperFault, a Modbus timeout, anything) just vanishes
-        into Python's default thread-exception hook -- the main loop already
-        printed "closing/opening gripper" and updated gripper_open before the
-        thread even started, so nothing here previously indicated whether the
-        gripper physically responded at all.
-
-        A GripperFault means the gripper latched a fault (or stopped
-        responding) and needs activate() to clear it -- that used to require
-        restarting the whole actor process. Here it auto-reactivates and
-        retries the same call once instead."""
-        try:
-            fn()
-        except GripperFault as e:
-            print(f"[gripper] {label} FAILED: {e!r} -- reactivating and retrying...")
-            try:
-                self.gripper.activate()
-            except Exception as activate_err:
-                print(f"[gripper] reactivation failed: {activate_err!r} -- gripper needs a physical check (power/cable/e-stop).")
-                return
-            try:
-                fn()
-                print(f"[gripper] {label} succeeded after reactivation.")
-            except Exception as retry_err:
-                print(f"[gripper] {label} FAILED again after reactivation: {retry_err!r} -- gripper needs a physical check.")
-        except Exception as e:
-            print(f"[gripper] {label} FAILED: {e!r} -- gripper may need re-activation (restart the actor process).")
-
     def _send_gripper_command(self, pos: float, mode="binary"):
         """Internal function to send gripper command to the robot."""
         if mode == "binary":
             if (pos <= -0.5) and (self.gripper_open) and (time.time() - self.last_gripper_act > self.gripper_sleep):  # close gripper
                 print("closing gripper")
-                threading.Thread(target=self._run_gripper_call, args=(self.gripper.grasp, "closing gripper"), daemon=True).start()
+                threading.Thread(target=self.gripper.grasp, daemon=True).start()
                 self.last_gripper_act = time.time()
                 self.gripper_open = False
             elif (pos >= 0.5) and (not self.gripper_open) and (time.time() - self.last_gripper_act > self.gripper_sleep):  # open gripper
                 print("opening gripper")
-                threading.Thread(target=self._run_gripper_call, args=(self.gripper.open, "opening gripper"), daemon=True).start()
+                threading.Thread(target=self.gripper.open, daemon=True).start()
                 self.last_gripper_act = time.time()
                 self.gripper_open = True
             else:
@@ -374,27 +340,10 @@ class FlexivEnv(gym.Env):
         if self.save_video:
             self.save_video_recording()
 
-        gripper_thread = threading.Thread(
-            target=self._run_gripper_call, args=(self.gripper.open, "opening gripper (reset)"), daemon=True
-        )
-        gripper_thread.start()
+        threading.Thread(target=self.gripper.open, daemon=True).start()
         self.last_gripper_act = time.time()
         self.gripper_open = True
-        # Join (not a fixed sleep) so a GripperFault's reactivate-and-retry path
-        # actually finishes before the arm moves to reset pose -- otherwise the
-        # arm could start moving while still gripping the peg. 15s covers the
-        # realistic worst case: open()'s own wait_until_done(timeout=5.0)
-        # (robotiq_gripper.py:97/138), then on a GripperFault, activate()
-        # (unbounded poll, robotiq_gripper.py:69-76 -- typically fast but has
-        # no internal timeout) plus a retried open() (another up to 5s). Still
-        # just a safety net, not a hard guarantee, since activate() can't be
-        # bounded from here.
-        gripper_thread.join(timeout=15.0)
-        if gripper_thread.is_alive():
-            print(
-                "[FlexivEnv] warning: gripper open/reactivate still in progress after 15s "
-                "-- moving to reset pose anyway, gripper state unconfirmed."
-            )
+        time.sleep(1.0)
         # move to config.RESET_ORIGIN + some random xyz noise
         print("Moving to reset pose...")
         self._move_to_reset_pose()
