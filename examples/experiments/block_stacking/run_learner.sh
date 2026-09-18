@@ -5,6 +5,6 @@ export XLA_PYTHON_CLIENT_PREALLOCATE=false && \
 export XLA_PYTHON_CLIENT_MEM_FRACTION=.75 && \
 python ../../train_rlpd.py "$@" \
     --exp_name=block_stacking \
-    --checkpoint_path=first_run \
-    --demo_path=../../demo_data/block_stacking_demos.pkl \
+    --checkpoint_path=pos1_first_run \
+    --demo_path=../../demo_data/block_stacking_pos1.pkl \
     --learner

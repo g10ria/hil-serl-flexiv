@@ -39,19 +39,23 @@ from experiments.block_stacking.wrapper import FlexivEnv, GripperPenaltyWrapper,
 class EnvConfig():
     ROBOT_SERIAL: str = LEFT_ARM_SERIAL
     REALSENSE_SERIALS: Dict[str, str] = {
-        "wrist": "230322277032",  # RealSense serial number(s)
+        "wrist": "230322277032",  # D405
+        "side": "242622071805",  # D435I
     }
     # Per-camera crop applied before the 128x128 downsize in FlexivEnv._get_obs()
     # -- e.g. {"wrist": lambda img: img[50:-50, 100:-100]}. Empty by default
     # (full frame, just resized), mirroring franka_env.py's DefaultEnvConfig.
-    IMAGE_CROP: Dict[str, Callable] = {}
+    IMAGE_CROP: Dict[str, Callable] = {
+        "side": lambda img: img[0:450, 100:600],
+    }
     ACTION_SCALE: Tuple[float, float, float] = (0.05, 1.0, 1)
     MAX_EPISODE_LENGTH: int = 450
     HZ: int = 30
 
-    RESET_ORIGIN: List[float] = [0.5916, -0.0251, 0.2566, 0.0284, 0.7191, 0.6936, -0.0317]
+    RESET_ORIGIN: List[float] = [0.60, 0.0, 0.68, 0.0, 0.0, -1.0, 0.0] # reset origin for this task
+    # RESET_ORIGIN: List[float] = [0.5916, -0.0251, 0.2566, 0.0284, 0.7191, 0.6936, -0.0317] # for the peg insertion!
     # Max +/- uniform noise (meters), added independently to x, y, z each
-    RESET_POS_NOISE: Tuple[float, float, float] = (0.05, 0.05, 0.05)
+    RESET_POS_NOISE: Tuple[float, float, float] = (0.00, 0.00, 0.00)
 
     MIN_TCP_Z: float = -0.01 # table safety cutoff in world-frame z axis
 
@@ -65,8 +69,8 @@ class TrainConfig(DefaultTrainingConfig):
     buffer_period = 1000
     checkpoint_period = 5000
 
-    def get_environment(self, fake_env=False, save_video=False, classifier=False, human_classifier=False):
-        env = FlexivEnv(hz=EnvConfig.HZ, fake_env=fake_env, config=EnvConfig(), save_video=save_video)
+    def get_environment(self, fake_env=False, save_video=False, classifier=False, human_classifier=False, video_dir="./videos", show_cameras=False):
+        env = FlexivEnv(hz=EnvConfig.HZ, fake_env=fake_env, config=EnvConfig(), save_video=save_video, video_dir=video_dir, show_cameras=show_cameras)
         if not fake_env:
             env = SpacemouseIntervention(env)
         env = RelativeFrame(env)

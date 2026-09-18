@@ -55,6 +55,11 @@ flags.DEFINE_boolean(
 )
 flags.DEFINE_boolean("save_video", False, "Save video.")
 flags.DEFINE_boolean(
+    "show_cameras", False,
+    "Show a live cv2 preview window per camera while the actor runs. Requires a display. "
+    "No effect on the learner (fake_env, no cameras)."
+)
+flags.DEFINE_boolean(
     "human_classifier", False,
     "Use a live human-typed 'Success? (1/0)' prompt (HumanClassifierWrapper) for reward "
     "instead of the trained classifier checkpoint. Leave off for real online RLPD training "
@@ -473,6 +478,7 @@ def main(_):
         save_video=FLAGS.save_video,
         classifier=True,
         human_classifier=FLAGS.human_classifier,
+        show_cameras=FLAGS.show_cameras,
     )
     env = RecordEpisodeStatistics(env)
 

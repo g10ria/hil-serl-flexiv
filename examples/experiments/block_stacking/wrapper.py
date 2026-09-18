@@ -14,6 +14,7 @@ from `observation_space`/`action_space` alone with zero hardware connected.
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
 import threading
 import time
@@ -50,7 +51,7 @@ class FlexivEnv(gym.Env):
     conventions closely enough that RelativeFrame/Quat2EulerWrapper/etc. work unmodified.
     """
 
-    def __init__(self, hz: int = 10, fake_env: bool = False, config=None, save_video: bool = False):
+    def __init__(self, hz: int = 10, fake_env: bool = False, config=None, save_video: bool = False, video_dir: str = "./videos", show_cameras: bool = False):
         self.config = config
         self.hz = hz
         self.dt = 1.0 / hz
@@ -62,11 +63,17 @@ class FlexivEnv(gym.Env):
         self.gripper_open = True
 
         # Debug/visualization only -- full-res (pre-downsize) frames accumulated
-        # per episode and written to ./videos/ on reset(), mirroring
+        # per episode and written to video_dir on reset(), mirroring
         # franka_env.py's save_video/recording_frames pattern. Never touches
         # obs/info, so it has no effect on what ends up in demos/replay buffers.
         self.save_video = save_video
+        self.video_dir = video_dir
         self.recording_frames = []
+
+        # Live cv2 preview windows, one per camera -- purely visual, same
+        # cropped/pre-resize frames as save_video writes out. Opt-in since
+        # imshow requires a display and adds a per-step waitKey(1) call.
+        self.show_cameras = show_cameras
 
         # 7-wide: (x, y, z, rx, ry, rz, gripper) -- gripper is a learned output
         # here, not just a spacemouse-intervention-only dimension (see
@@ -171,6 +178,10 @@ class FlexivEnv(gym.Env):
             name: cv2.resize(cropped, (IMAGE_SIZE, IMAGE_SIZE))
             for name, cropped in cropped_images.items()
         }
+        if self.show_cameras:
+            for name, cropped in cropped_images.items():
+                cv2.imshow(f"camera: {name}", cv2.cvtColor(cropped, cv2.COLOR_RGB2BGR))
+            cv2.waitKey(1)
         if self.save_video:
             self.recording_frames.append(cropped_images)
         # print(
@@ -307,29 +318,52 @@ class FlexivEnv(gym.Env):
         episode. Debug/visualization only -- ported from franka_env.py's identical method."""
         try:
             if len(self.recording_frames):
-                if not os.path.exists("./videos"):
-                    os.makedirs("./videos")
+                if not os.path.exists(self.video_dir):
+                    os.makedirs(self.video_dir)
 
                 timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 
                 for camera_key in self.recording_frames[0].keys():
-                    video_path = f"./videos/{camera_key}_{timestamp}.mp4"
+                    video_path = f"{self.video_dir}/{camera_key}_{timestamp}.mp4"
+                    # OpenCV's bundled ffmpeg here has no libx264 (and no /dev/video*
+                    # hardware encoder), so cv2.VideoWriter can only write mp4v
+                    # (MPEG-4 Part 2) -- most players don't ship a decoder for that.
+                    # Write mp4v to a temp file, then shell out to the system ffmpeg
+                    # (which does have libx264) to transcode to H.264 at video_path.
+                    raw_path = f"{self.video_dir}/.{camera_key}_{timestamp}_raw.mp4"
 
                     first_frame = self.recording_frames[0][camera_key]
                     height, width = first_frame.shape[:2]
 
                     video_writer = cv2.VideoWriter(
-                        video_path,
+                        raw_path,
                         cv2.VideoWriter_fourcc(*"mp4v"),
                         self.hz,
                         (width, height),
                     )
 
                     for frame_dict in self.recording_frames:
-                        video_writer.write(frame_dict[camera_key])
+                        # frame_dict[camera_key] is RGB (RealSense's rs.format.rgb8) --
+                        # cv2.VideoWriter.write() expects BGR, so without this the
+                        # red/blue channels come out swapped in the encoded video.
+                        video_writer.write(cv2.cvtColor(frame_dict[camera_key], cv2.COLOR_RGB2BGR))
 
                     video_writer.release()
-                    print(f"Saved video for camera {camera_key} at {video_path}")
+
+                    try:
+                        subprocess.run(
+                            ["ffmpeg", "-y", "-v", "error", "-i", raw_path,
+                             "-c:v", "libx264", "-pix_fmt", "yuv420p", video_path],
+                            check=True,
+                        )
+                        os.remove(raw_path)
+                        print(f"Saved video for camera {camera_key} at {video_path}")
+                    except (subprocess.CalledProcessError, FileNotFoundError) as e:
+                        # ffmpeg missing/failed -- fall back to keeping the mp4v file
+                        # under its intended name rather than losing the recording.
+                        os.replace(raw_path, video_path)
+                        print(f"[save_video_recording] ffmpeg transcode failed ({e!r}) -- "
+                              f"kept mp4v (may not play in all players) at {video_path}")
         finally:
             self.recording_frames.clear()
 
@@ -381,6 +415,8 @@ class FlexivEnv(gym.Env):
     def close(self):
         if self.fake_env:
             return
+        if self.show_cameras:
+            cv2.destroyAllWindows()
         self.cameras.close()
         self.robot.close()
 

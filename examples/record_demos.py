@@ -24,6 +24,15 @@ flags.DEFINE_boolean(
     "instead of the trained classifier checkpoint. Defaults on for demo collection -- see "
     "the comment below on HumanClassifierWrapper prompting on every `done`."
 )
+flags.DEFINE_string(
+    "video_dir", "./videos",
+    "Directory to save per-episode per-camera videos to (e.g. './videos/position1'). "
+    "Created if it doesn't exist."
+)
+flags.DEFINE_boolean(
+    "show_cameras", False,
+    "Show a live cv2 preview window per camera while teleoperating. Requires a display."
+)
 
 def save_transitions(transitions, file_name):
     with open(file_name, "wb") as f:
@@ -33,7 +42,7 @@ def save_transitions(transitions, file_name):
 def main(_):
     assert FLAGS.exp_name in CONFIG_MAPPING, 'Experiment folder not found.'
     config = CONFIG_MAPPING[FLAGS.exp_name]()
-    env = config.get_environment(fake_env=False, save_video=True, classifier=True, human_classifier=FLAGS.human_classifier)
+    env = config.get_environment(fake_env=False, save_video=True, classifier=True, human_classifier=FLAGS.human_classifier, video_dir=FLAGS.video_dir, show_cameras=FLAGS.show_cameras)
 
     obs, info = env.reset()
     print("Reset done")
